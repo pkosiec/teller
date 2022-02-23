@@ -18,21 +18,30 @@ type AWSSecretsManagerClient interface {
 	GetSecretValue(ctx context.Context, params *secretsmanager.GetSecretValueInput, optFns ...func(*secretsmanager.Options)) (*secretsmanager.GetSecretValueOutput, error)
 	CreateSecret(ctx context.Context, params *secretsmanager.CreateSecretInput, optFns ...func(*secretsmanager.Options)) (*secretsmanager.CreateSecretOutput, error)
 	PutSecretValue(ctx context.Context, params *secretsmanager.PutSecretValueInput, optFns ...func(*secretsmanager.Options)) (*secretsmanager.PutSecretValueOutput, error)
+	DeleteSecret(ctx context.Context, params *secretsmanager.DeleteSecretInput, optFns ...func(*secretsmanager.Options)) (*secretsmanager.DeleteSecretOutput, error)
 }
 
 type AWSSecretsManager struct {
-	client AWSSecretsManagerClient
+	client                        AWSSecretsManagerClient
+	deletionDisableRecoveryWindow bool
+	deletionRecoveryWindowInDays  int64
 }
 
+const defaultDeletionRecoveryWindowInDays = 7
+
 func NewAWSSecretsManager() (core.Provider, error) {
-	cfg, err := config.LoadDefaultConfig(context.TODO())
+	cfg, err := config.LoadDefaultConfig(context.Background())
 	if err != nil {
 		return nil, err
 	}
 
 	client := secretsmanager.NewFromConfig(cfg)
 
-	return &AWSSecretsManager{client: client}, nil
+	return &AWSSecretsManager{
+		client:                        client,
+		deletionRecoveryWindowInDays:  defaultDeletionRecoveryWindowInDays,
+		deletionDisableRecoveryWindow: false,
+	}, nil
 }
 
 func (a *AWSSecretsManager) Name() string {
@@ -107,11 +116,48 @@ func (a *AWSSecretsManager) Get(kp core.KeyPath) (*core.EnvEntry, error) {
 }
 
 func (a *AWSSecretsManager) Delete(kp core.KeyPath) error {
-	return fmt.Errorf("%s does not implement delete yet", a.Name())
+	kvs, err := a.getSecret(kp)
+	if err != nil {
+		return err
+	}
+
+	k := kp.EffectiveKey()
+	delete(kvs, k)
+	
+	if len(kvs) == 0 {
+		return a.DeleteMapping(kp)
+	}
+
+	secretBytes, err := json.Marshal(kvs)
+	if err != nil {
+		return err
+	}
+
+	secretString := string(secretBytes)
+	ctx := context.Background()
+	_, err = a.client.PutSecretValue(ctx, &secretsmanager.PutSecretValueInput{SecretId: &kp.Path, SecretString: &secretString})
+	return err
 }
 
 func (a *AWSSecretsManager) DeleteMapping(kp core.KeyPath) error {
-	return fmt.Errorf("%s does not implement delete yet", a.Name())
+	kvs, err := a.getSecret(kp)
+	if err != nil {
+		return err
+	}
+
+	if kvs == nil {
+		// already deleted
+		return nil
+	}
+
+	ctx := context.Background()
+	_, err = a.client.DeleteSecret(ctx, &secretsmanager.DeleteSecretInput{
+		SecretId:                   &kp.Path,
+		RecoveryWindowInDays:       a.deletionRecoveryWindowInDays,
+		ForceDeleteWithoutRecovery: a.deletionDisableRecoveryWindow,
+	})
+
+	return err
 }
 
 func (a *AWSSecretsManager) getSecret(kp core.KeyPath) (map[string]string, error) {
