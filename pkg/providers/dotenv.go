@@ -1,7 +1,6 @@
 package providers
 
 import (
-	"fmt"
 	"os"
 	"path"
 	"sort"
@@ -120,11 +119,33 @@ func (a *Dotenv) Get(p core.KeyPath) (*core.EnvEntry, error) {
 }
 
 func (a *Dotenv) Delete(kp core.KeyPath) error {
-	return fmt.Errorf("%s does not implement delete yet", a.Name())
+	kvs, err := a.getSecrets(kp)
+	if err != nil {
+		return err
+	}
+
+	k := kp.EffectiveKey()
+	delete(kvs, k)
+
+	if len(kvs) == 0 {
+		return a.DeleteMapping(kp) // delete whole secret
+	}
+
+	p, err := homedir.Expand(kp.Path)
+	if err != nil {
+		return err
+	}
+
+	return a.client.Write(p, kvs)
 }
 
 func (a *Dotenv) DeleteMapping(kp core.KeyPath) error {
-	return fmt.Errorf("%s does not implement delete yet", a.Name())
+	p, err := homedir.Expand(kp.Path)
+	if err != nil {
+		return err
+	}
+
+	return os.Remove(p)
 }
 
 func (a *Dotenv) getSecrets(kp core.KeyPath) (map[string]string, error) {
