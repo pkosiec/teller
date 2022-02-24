@@ -76,7 +76,7 @@ func (a *AWSSecretsManager) PutMapping(kp core.KeyPath, m map[string]string) err
 	secretAlreadyExist := len(secrets) != 0
 
 	utils.Merge(m, secrets)
-	secretBytes, err := json.Marshal(m)
+	secretBytes, err := json.Marshal(secrets)
 	if err != nil {
 		return err
 	}
@@ -123,7 +123,7 @@ func (a *AWSSecretsManager) Delete(kp core.KeyPath) error {
 
 	k := kp.EffectiveKey()
 	delete(kvs, k)
-	
+
 	if len(kvs) == 0 {
 		return a.DeleteMapping(kp)
 	}
